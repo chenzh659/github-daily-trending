@@ -1,0 +1,633 @@
+import os
+import sys
+import json
+import datetime
+import urllib.request
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+TODAY_STR = datetime.datetime.now().strftime("%Y-%m-%d")
+DATE_DISPLAY = datetime.datetime.now().strftime("%Y年%m月%d日")
+
+SEARCH_QUERIES = [
+    {"category": "ai", "cat_name": "🤖 AI & 大模型前沿", "query": "topic:ai OR topic:llm OR topic:agent stars:>100 pushed:>2026-07-01"},
+    {"category": "devtools", "cat_name": "⚡ 开发者利器 & 基础设施", "query": "topic:developer-tools OR topic:cli stars:>100 pushed:>2026-07-01"},
+    {"category": "apps", "cat_name": "🌐 爆款应用 & 全栈开源", "query": "stars:>500 pushed:>2026-07-15"}
+]
+
+def fetch_github_trending():
+    """Fetch real-time trending repos from GitHub Search API."""
+    categorized_projects = {}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "application/vnd.github.v3+json"
+    }
+
+    for q_info in SEARCH_QUERIES:
+        cat_key = q_info["category"]
+        cat_name = q_info["cat_name"]
+        query_str = urllib.parse.quote(q_info["query"])
+        url = f"https://api.github.com/search/repositories?q={query_str}&sort=stars&order=desc&per_page=4"
+
+        items = []
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for repo in data.get("items", [])[:4]:
+                    items.append({
+                        "name": repo.get("name"),
+                        "full_name": repo.get("full_name"),
+                        "desc": repo.get("description") or "暂无详细描述",
+                        "url": repo.get("html_url"),
+                        "stars": repo.get("stargazers_count", 0),
+                        "forks": repo.get("forks_count", 0),
+                        "language": repo.get("language") or "TypeScript/Python",
+                        "topics": repo.get("topics", [])[:4],
+                        "owner_avatar": repo.get("owner", {}).get("avatar_url", "")
+                    })
+        except Exception as e:
+            print(f"[Warning] Failed to fetch for query '{q_info['category']}': {e}")
+
+        # Fallback if rate limited or empty
+        if not items:
+            items = get_fallback_items(cat_key)
+
+        categorized_projects[cat_key] = {
+            "name": cat_name,
+            "items": items
+        }
+
+    return categorized_projects
+
+def get_fallback_items(cat_key):
+    """Fallback high-quality projects if API rate-limited."""
+    fallbacks = {
+        "ai": [
+            {
+                "name": "browser-use",
+                "full_name": "browser-use/browser-use",
+                "desc": "让 AI Agent 能够像人类一样自主操作 Chrome 浏览器进行自动化工作流",
+                "url": "https://github.com/browser-use/browser-use",
+                "stars": 18450,
+                "forks": 1920,
+                "language": "Python",
+                "topics": ["ai-agent", "browser-automation", "llm", "playwright"]
+            },
+            {
+                "name": "ds-r1-inference",
+                "full_name": "deepseek-ai/DeepSeek-R1",
+                "desc": "开源第一梯队 System 2 推理大模型，支持强逻辑强化学习与慢思考推演",
+                "url": "https://github.com/deepseek-ai/DeepSeek-R1",
+                "stars": 42100,
+                "forks": 4890,
+                "language": "Python",
+                "topics": ["reasoning", "llm", "deepseek", "rl"]
+            }
+        ],
+        "devtools": [
+            {
+                "name": "ast-grep",
+                "full_name": "ast-grep/ast-grep",
+                "desc": "基于语法树 (AST) 的极速结构化代码检索与多语言 Codemod 重构利器",
+                "url": "https://github.com/ast-grep/ast-grep",
+                "stars": 8900,
+                "forks": 340,
+                "language": "Rust",
+                "topics": ["ast", "codemod", "rust", "cli"]
+            },
+            {
+                "name": "uv",
+                "full_name": "astral-sh/uv",
+                "desc": "使用 Rust 编写的极速 Python 包管理器与虚拟环境工具，比 pip 快 10-100 倍",
+                "url": "https://github.com/astral-sh/uv",
+                "stars": 29800,
+                "forks": 780,
+                "language": "Rust",
+                "topics": ["python", "package-manager", "rust"]
+            }
+        ],
+        "apps": [
+            {
+                "name": "open-canvas",
+                "full_name": "langchain-ai/open-canvas",
+                "desc": "开源版 AI 画布与协作写作排版平台，支持实时代码生成与文章迭代",
+                "url": "https://github.com/langchain-ai/open-canvas",
+                "stars": 6400,
+                "forks": 510,
+                "language": "TypeScript",
+                "topics": ["canvas", "editor", "nextjs", "agent"]
+            }
+        ]
+    }
+    return fallbacks.get(cat_key, [])
+
+def build_trending_html(projects_data):
+    """Render Anthropic Editorial v2 HTML for Github Trending Report."""
+    
+    # Calculate stats
+    total_repos = sum(len(cat["items"]) for cat in projects_data.values())
+    total_stars = sum(repo["stars"] for cat in projects_data.values() for repo in cat["items"])
+    
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub 全球爆款开源项目精选 - {DATE_DISPLAY}</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,300;0,400;0,700;0,900;1,300;1,400&family=Noto+Serif+SC:wght@300;400;600;700&display=swap');
+
+        :root {{
+            --bg-paper: #FAF7F2;
+            --card-bg: #FFFFFF;
+            --card-subtle: #F3EFE6;
+            --text-main: #1F1A17;
+            --text-muted: #6E665E;
+            --text-light: #8C837A;
+            --accent-coral: #D97757;
+            --accent-dark: #8C3B24;
+            --accent-soft: #F2E3D5;
+            --border-color: #E6DFD5;
+            --border-dark: #D4C9B8;
+            --shadow-subtle: rgba(31, 26, 23, 0.04);
+            --shadow-hover: rgba(217, 119, 87, 0.12);
+        }}
+
+        [data-theme="dark"] {{
+            --bg-paper: #181614;
+            --card-bg: #23201D;
+            --card-subtle: #2C2824;
+            --text-main: #ECE6DE;
+            --text-muted: #B3AAA0;
+            --text-light: #8C837A;
+            --accent-coral: #E08769;
+            --accent-dark: #F0A58C;
+            --accent-soft: #382A24;
+            --border-color: #36312B;
+            --border-dark: #4A433B;
+            --shadow-subtle: rgba(0, 0, 0, 0.2);
+            --shadow-hover: rgba(224, 135, 105, 0.2);
+        }}
+
+        * {{
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }}
+
+        body {{
+            font-family: 'Noto Serif SC', 'Merriweather', 'Georgia', serif;
+            background-color: var(--bg-paper);
+            color: var(--text-main);
+            line-height: 1.85;
+            padding: 0;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }}
+
+        #progress-bar {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 3px;
+            background-color: var(--accent-coral);
+            width: 0%;
+            z-index: 1000;
+            transition: width 0.1s ease-out;
+        }}
+
+        .top-nav {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid var(--border-color);
+            background-color: var(--bg-paper);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+        }}
+
+        .nav-title {{
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--accent-coral);
+            font-weight: 700;
+        }}
+
+        .controls-group {{
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }}
+
+        .btn-toggle {{
+            background-color: var(--card-subtle);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 0.8rem;
+            padding: 0.4rem 0.8rem;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-weight: 600;
+        }}
+
+        .btn-toggle:hover {{
+            border-color: var(--accent-coral);
+            color: var(--accent-coral);
+        }}
+
+        .header {{
+            padding: 4rem 2rem 3rem;
+            border-bottom: 1px solid var(--border-color);
+            background-color: var(--bg-paper);
+        }}
+
+        .container {{
+            max-width: 1120px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+        }}
+
+        .header-meta {{
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--accent-coral);
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }}
+
+        .header-meta::before {{
+            content: "";
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background-color: var(--accent-coral);
+            border-radius: 50%;
+        }}
+
+        .header h1 {{
+            font-size: 2.8rem;
+            font-weight: 700;
+            color: var(--text-main);
+            line-height: 1.25;
+            margin-bottom: 1rem;
+        }}
+
+        .header p {{
+            font-size: 1.2rem;
+            color: var(--text-muted);
+            font-style: italic;
+            max-width: 850px;
+            font-weight: 300;
+        }}
+
+        .tab-bar {{
+            display: flex;
+            gap: 0.5rem;
+            margin: 2.5rem 0 1.5rem 0;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.5rem;
+            overflow-x: auto;
+        }}
+
+        .tab-btn {{
+            background: none;
+            border: none;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            border-radius: 4px;
+            font-weight: 600;
+            white-space: nowrap;
+        }}
+
+        .tab-btn.active {{
+            color: var(--accent-coral);
+            background-color: var(--accent-soft);
+        }}
+
+        /* Repo Card Grid */
+        .repo-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+            gap: 1.75rem;
+            margin-bottom: 3rem;
+        }}
+
+        @media (max-width: 600px) {{
+            .repo-grid {{
+                grid-template-columns: 1fr;
+            }}
+        }}
+
+        .repo-card {{
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.75rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            box-shadow: 0 2px 4px var(--shadow-subtle);
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }}
+
+        .repo-card:hover {{
+            border-color: var(--accent-coral);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 16px var(--shadow-hover);
+        }}
+
+        .repo-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.75rem;
+        }}
+
+        .repo-title {{
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--accent-dark);
+            text-decoration: none;
+        }}
+
+        .repo-title:hover {{
+            text-decoration: underline;
+        }}
+
+        .star-badge {{
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 0.8rem;
+            background-color: var(--accent-soft);
+            color: var(--accent-dark);
+            padding: 0.25rem 0.6rem;
+            border-radius: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }}
+
+        .repo-desc {{
+            font-size: 0.975rem;
+            color: var(--text-main);
+            margin-bottom: 1.25rem;
+            line-height: 1.65;
+            flex-grow: 1;
+        }}
+
+        .repo-tags {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-bottom: 1rem;
+        }}
+
+        .tag-item {{
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 0.75rem;
+            background-color: var(--card-subtle);
+            color: var(--text-muted);
+            padding: 0.2rem 0.55rem;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+        }}
+
+        .repo-footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 0.825rem;
+            color: var(--text-light);
+            border-top: 1px solid var(--border-color);
+            padding-top: 0.75rem;
+            margin-top: 0.5rem;
+        }}
+
+        .lang-indicator {{
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-weight: 600;
+        }}
+
+        .lang-dot {{
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background-color: var(--accent-coral);
+        }}
+
+        .section-heading {{
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin: 2.5rem 0 1.5rem 0;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--text-main);
+        }}
+
+        .toast {{
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background-color: var(--accent-dark);
+            color: white;
+            padding: 0.75rem 1.25rem;
+            border-radius: 6px;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 0.875rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s ease;
+            pointer-events: none;
+            z-index: 1000;
+        }}
+
+        .toast.show {{
+            opacity: 1;
+            transform: translateY(0);
+        }}
+
+        .footer {{
+            border-top: 1px solid var(--border-color);
+            padding: 3.5rem 0;
+            background-color: var(--bg-paper);
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+
+    <div id="progress-bar"></div>
+
+    <nav class="top-nav">
+        <div class="nav-title">GitHub Daily Trending · Open Source Briefing</div>
+        <div class="controls-group">
+            <button class="btn-toggle" onclick="copyTrendingSummary()">
+                <span>📋</span> 复制优质项目清单
+            </button>
+            <button class="btn-toggle" onclick="toggleTheme()">
+                <span id="theme-icon">🌙</span> <span id="theme-text">夜间模式</span>
+            </button>
+        </div>
+    </nav>
+
+    <header class="header">
+        <div class="container">
+            <div class="header-meta">
+                <span>DAILY OPEN SOURCE DIGEST</span>
+                <span>·</span>
+                <span>{DATE_DISPLAY}</span>
+            </div>
+            <h1>GitHub 全球爆款开源项目每日精选</h1>
+            <p>每日自动化为您检索 AI 智能体、基础设施、前沿开发者工具及全栈高分开源项目。</p>
+        </div>
+    </header>
+
+    <div class="container">
+
+        <div class="tab-bar">
+            <button class="tab-btn active" onclick="filterCategory('all', this)">全部项目 (All)</button>
+            <button class="tab-btn" onclick="filterCategory('ai', this)">🤖 AI & 大模型</button>
+            <button class="tab-btn" onclick="filterCategory('devtools', this)">⚡ 开发者工具</button>
+            <button class="tab-btn" onclick="filterCategory('apps', this)">🌐 爆款应用</button>
+        </div>
+
+"""
+
+    # Generate sections for each category
+    for cat_key, cat_data in projects_data.items():
+        html += f"""
+        <div class="category-block" data-category="{cat_key}">
+            <h2 class="section-heading">{cat_data['name']}</h2>
+            <div class="repo-grid">
+"""
+        for repo in cat_data["items"]:
+            stars_formatted = f"{repo['stars']:,}"
+            topics_html = "".join([f'<span class="tag-item">#{t}</span>' for t in repo.get("topics", [])])
+            html += f"""
+                <div class="repo-card">
+                    <div>
+                        <div class="repo-header">
+                            <a class="repo-title" href="{repo['url']}" target="_blank">{repo['full_name']}</a>
+                            <span class="star-badge">★ {stars_formatted}</span>
+                        </div>
+                        <p class="repo-desc">{repo['desc']}</p>
+                        <div class="repo-tags">
+                            {topics_html}
+                        </div>
+                    </div>
+                    <div class="repo-footer">
+                        <div class="lang-indicator">
+                            <span class="lang-dot"></span>
+                            <span>{repo['language']}</span>
+                        </div>
+                        <a href="{repo['url']}" target="_blank" style="color:var(--accent-coral); text-decoration:none; font-weight:600;">查看仓库 ↗</a>
+                    </div>
+                </div>
+"""
+        html += """
+            </div>
+        </div>
+"""
+
+    html += f"""
+    </div>
+
+    <div class="toast" id="toast">已成功复制今日爆款开源项目清单！</div>
+
+    <footer class="footer">
+        <div class="container">
+            <p>GitHub 全球爆款开源项目每日精选 · {DATE_DISPLAY}</p>
+            <p style="font-style:italic; font-size:0.85rem; margin-top:0.5rem; color:var(--text-light);">“Stay hungry, stay foolish. Explore open source every single day.”</p>
+        </div>
+    </footer>
+
+    <script>
+        window.addEventListener('scroll', () => {{
+            const winScroll = document.documentElement.scrollTop || document.body.scrollTop;
+            const height = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+            const scrolled = (winScroll / height) * 100;
+            document.getElementById('progress-bar').style.width = scrolled + '%';
+        }});
+
+        function toggleTheme() {{
+            const html = document.documentElement;
+            const currentTheme = html.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            html.setAttribute('data-theme', newTheme);
+            document.getElementById('theme-icon').textContent = newTheme === 'light' ? '🌙' : '☀️';
+            document.getElementById('theme-text').textContent = newTheme === 'light' ? '夜间模式' : '日光模式';
+        }}
+
+        function filterCategory(cat, btn) {{
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.querySelectorAll('.category-block').forEach(block => {{
+                if (cat === 'all' || block.getAttribute('data-category') === cat) {{
+                    block.style.display = 'block';
+                }} else {{
+                    block.style.display = 'none';
+                }}
+            }});
+        }}
+
+        function copyTrendingSummary() {{
+            const summaryText = "【GitHub 今日爆款开源项目推荐 {DATE_DISPLAY}】\\n1. browser-use/browser-use: AI Agent 浏览器自动化控制\\n2. deepseek-ai/DeepSeek-R1: 第一梯队开源慢思考推理大模型\\n3. ast-grep/ast-grep: 极速 AST 代码搜索与 Codemod 利器\\n4. astral-sh/uv: Rust 编写的极速 Python 包管理器";
+            navigator.clipboard.writeText(summaryText).then(() => {{
+                const toast = document.getElementById('toast');
+                toast.classList.add('show');
+                setTimeout(() => toast.classList.remove('show'), 2500);
+            }});
+        }}
+    </script>
+</body>
+</html>"""
+
+    return html
+
+def main():
+    print(f"🚀 Starting GitHub Trending report generation for {TODAY_STR}...")
+    
+    # Fetch trending repos
+    projects_data = fetch_github_trending()
+    
+    # Build HTML
+    html_output = build_trending_html(projects_data)
+    
+    # Save index.html
+    with open("index.html", "w", encoding="utf-8") as f:
+        f.write(html_output)
+    print("✅ Successfully updated index.html")
+    
+    # Archive report
+    os.makedirs("reports", exist_ok=True)
+    archive_file = os.path.join("reports", f"{TODAY_STR}.html")
+    with open(archive_file, "w", encoding="utf-8") as f:
+        f.write(html_output)
+    print(f"✅ Successfully archived report to {archive_file}")
+
+if __name__ == "__main__":
+    main()

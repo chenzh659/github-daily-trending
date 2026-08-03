@@ -1,0 +1,35 @@
+name: GitHub Daily Trending Open Source Generator
+
+on:
+  schedule:
+    # 每天 UTC 00:00 (相当北京时间早 8:00) 自动触发
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 支持手动点击立即触发
+
+permissions:
+  contents: write
+
+jobs:
+  generate-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.x
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run GitHub Trending Report Generator
+        run: |
+          python generate_trending_report.py
+
+      - name: Commit & Push Generated Report
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action Bot"
+          git add index.html reports/
+          git diff-index --quiet HEAD || git commit -m "auto: update daily trending open source report for $(date +'%Y-%m-%d')"
+          git push
